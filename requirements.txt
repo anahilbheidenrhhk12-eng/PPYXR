@@ -1,0 +1,8 @@
+python-telegram-bot>=22.5,<23
+selenium>=4.20,<5
+undetected-chromedriver>=3.5.5,<4
+requests[socks]>=2.31,<3
+python-dotenv>=1,<2
+pyvirtualdisplay>=3,<4
+qrcode[pil]>=7.4,<9
+setuptools>=70
