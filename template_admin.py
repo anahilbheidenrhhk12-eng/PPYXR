@@ -16,6 +16,7 @@ import unicodedata
 import creative_admin
 import creative_templates
 import admin_ui
+import admin_dashboard
 from email import policy
 from email.parser import BytesParser
 from http.cookies import SimpleCookie
@@ -153,63 +154,33 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
 
     def _login_page(self, message=""):
         login_nonce = _new_session(_admin_key())
-        warning = ('<div class="note error">' + html.escape(message) + '</div>') if message else ""
-        body = ("""<div class="top"><div><h1>🔐 PPYXR Template Manager</h1>
-<p class="muted">Private administrator access</p></div></div>
-<section class="card">""" + warning + """
-<form method="post" action="/admin/templates/login">
-<input type="hidden" name="login_nonce" value="__LOGIN_NONCE__">
-<label>Admin username</label><input type="text" name="username" required autocomplete="username">
-<label>Admin password</label><input type="password" name="password" required autocomplete="current-password">
-<button type="submit">Sign in</button></form>
-<p class="muted"><small>Credentials: Railway → PIXEL → Variables → ADMIN_USER / ADMIN_PASSWORD.</small></p>
-</section>""")
-        body = body.replace("__LOGIN_NONCE__", html.escape(login_nonce, quote=True))
+        warning = (
+            '<div class="note error">' + html.escape(message) + '</div>'
+            if message else ""
+        )
+        body = (
+            '<div class="eyebrow">WELCOME BACK</div>'
+            '<h1>Sign in to your<br>creative workspace.</h1>'
+            '<p style="margin-top:14px">Your designs, content and tools, all in one private dashboard.</p>'
+            '<section class="card">' + warning
+            + '<form method="post" action="/admin/templates/login">'
+            '<input type="hidden" name="login_nonce" value="'
+            + html.escape(login_nonce, quote=True) + '">'
+            '<div class="field"><label for="admin-username">USERNAME</label>'
+            '<input id="admin-username" type="text" name="username" '
+            'required autocomplete="username" placeholder="Enter admin username"></div>'
+            '<div class="field"><label for="admin-password">PASSWORD</label>'
+            '<input id="admin-password" type="password" name="password" '
+            'required autocomplete="current-password" placeholder="Enter your password"></div>'
+            '<button type="submit">' + admin_ui.icon("shield", 17)
+            + ' Access dashboard ' + admin_ui.icon("arrow", 17)
+            + '</button></form><p style="font-size:11px;margin-top:20px">'
+            'Access is restricted to authorized workspace administrators.</p></section>'
+        )
         self._send(200, _page("Login", body, active="login"))
 
-    def _dashboard(self, session, message=""):
-        key = _admin_key()
-        csrf = _csrf(key, session)
-        files = []
-        for path in _folder().iterdir():
-            if path.is_file() and not path.is_symlink() and _valid_name(path.name):
-                files.append(path)
-        files.sort(key=lambda p: p.name.lower())
-        items = []
-        for path in files:
-            name = html.escape(path.name, quote=True)
-            link = "/admin/templates/file?name=" + quote(path.name)
-            editor_link = ('<a class="btn" href="/admin/templates/edit?name=' + quote(path.name) + '">Configure text</a>') if path.suffix.lower() == ".svg" else ""
-            items.append(
-                '<div class="row"><div><strong>' + name + '</strong>'
-                '<div class="muted"><small>' + _friendly_size(path.stat().st_size) + '</small></div></div>'
-                '<div class="actions"><a class="btn" href="' + html.escape(link, quote=True)
-                + '">Download</a>' + editor_link + '<form method="post" action="/admin/templates/delete" class="inline">'
-                '<input type="hidden" name="csrf" value="' + csrf + '">'
-                '<input type="hidden" name="name" value="' + name + '">'
-                '<button type="submit" class="danger">Delete</button></form></div></div>'
-            )
-        alert = ""
-        if message:
-            alert = '<div class="note">' + html.escape(message[:180]) + '</div>'
-        body = ("""<div class="top"><div><h1>📁 PPYXR Templates</h1>
-<p class="muted">Private admin library · Stored on Railway persistent volume</p></div>
-<form method="post" action="/admin/templates/logout">
-<input type="hidden" name="csrf" value="%s"><button class="ghost">Log out</button></form></div>
-%s
-<section class="card"><h2>Upload or replace a template</h2>
-<form action="/admin/templates/upload" method="post" enctype="multipart/form-data">
-<input type="hidden" name="csrf" value="%s">
-<label>Template file</label><input name="file" type="file"
-accept=".svg,.png,.jpg,.jpeg,.webp,.pdf,.zip,.docx" required>
-<label><input type="checkbox" name="replace" value="yes"> Replace existing file if names match</label>
-<p class="muted"><small>Allowed: SVG, PNG, JPG, WEBP, PDF, ZIP, DOCX. Max 20 MB per file.</small></p>
-<button type="submit">Upload template</button></form></section>
-<section class="card"><h2>Saved templates (%d)</h2>%s</section>
-<p class="muted"><small>Only files uploaded here are managed; no existing project files are changed.
-This library does not automatically change eligibility-verification workflows.</small></p>"""
-                % (csrf, alert, csrf, len(files), "".join(items) or '<p class="muted">No templates uploaded yet.</p>'))
-        self._send(200, _page("Templates", body))
+    def _dashboard(self, session, message="", view="dashboard"):
+        return admin_dashboard.render(self, session, message, view)
 
     def do_GET(self):
         route = urlsplit(self.path)
@@ -238,7 +209,25 @@ This library does not automatically change eligibility-verification workflows.</
             return
         if route.path == "/admin/templates":
             params = parse_qs(route.query)
-            self._dashboard(session, (params.get("msg") or [""])[0])
+            self._dashboard(
+                session,
+                (params.get("msg") or [""])[0],
+                (params.get("view") or ["dashboard"])[0],
+            )
+            return
+        if route.path == "/admin/templates/thumb":
+            name = (parse_qs(route.query).get("name") or [""])[0]
+            if not _valid_name(name):
+                self._send(400, b"Invalid file name", "text/plain")
+                return
+            suffix = Path(name).suffix.lower()
+            types = {".png": "image/png", ".jpg": "image/jpeg",
+                     ".jpeg": "image/jpeg", ".webp": "image/webp"}
+            path = _folder() / name
+            if suffix not in types or path.is_symlink() or not path.is_file():
+                self._send(404, b"Preview not available", "text/plain")
+                return
+            self._send(200, path.read_bytes(), types[suffix])
             return
         if creative_admin.do_get(self, route, session):
             return
