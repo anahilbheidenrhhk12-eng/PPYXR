@@ -168,45 +168,14 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
         except (UnicodeError, ValueError):
             return {}
 
-    def _same_origin(self):
-        origin = self.headers.get("Origin")
-        if not origin:
-            return True
-        try:
-            parsed = urlsplit(origin)
-            # Railway terminates HTTPS at its proxy; its upstream Host
-            # header may differ from the public origin seen by the browser.
-            # Trust only the service's explicitly approved public domains.
-            allowed = {
-                "pixel-production-f03d.up.railway.app",
-                "digisellabot.site",
-                (os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip().lower(),
-            }
-            allowed.update(
-                host.strip().lower()
-                for host in os.getenv("TEMPLATE_ADMIN_ALLOWED_HOSTS", "").split(",")
-                if host.strip()
-            )
-            return (
-                parsed.scheme == "https"
-                and parsed.hostname is not None
-                and parsed.hostname.lower() in allowed
-                and parsed.port in (None, 443)
-                and not parsed.username
-                and not parsed.password
-                and not parsed.path
-                and not parsed.query
-                and not parsed.fragment
-            )
-        except ValueError:
-            return False
-
     def _login_page(self, message=""):
+        login_nonce = _new_session(_admin_key())
         warning = ('<div class="note error">' + html.escape(message) + '</div>') if message else ""
         body = ("""<div class="top"><div><h1>🔐 PPYXR Template Manager</h1>
 <p class="muted">Private administrator access</p></div></div>
 <section class="card">""" + warning + """
 <form method="post" action="/admin/templates/login">
+<input type="hidden" name="login_nonce" value="""" + login_nonce + """">
 <label>Admin username</label><input type="text" name="username" required autocomplete="username">
 <label>Admin password</label><input type="password" name="password" required autocomplete="current-password">
 <button type="submit">Sign in</button></form>
@@ -304,9 +273,8 @@ This library does not automatically change eligibility-verification workflows.</
         ):
             self._send(404, b"Not found", "text/plain")
             return
-        if not self._same_origin():
-            self._send(403, b"Invalid origin", "text/plain")
-            return
+        # Railway/browser proxy origin headers are not reliable. Each POST
+        # is instead protected by a signed nonce or session-bound CSRF token.
         key = _admin_key()
         if not key:
             self._send(503, b"Admin credentials not configured", "text/plain")
@@ -317,6 +285,15 @@ This library does not automatically change eligibility-verification workflows.</
                 self._send(413, b"Request too large", "text/plain")
                 return
             fields = self._fields(body)
+            nonce = fields.get("login_nonce", "")
+            if not _session_valid(key, nonce):
+                self._login_page("Login page expired. Please sign in again.")
+                return
+            # A login token is valid for 15 minutes; mutations after login
+            # remain protected by session-bound CSRF tokens.
+            if time.time() - int(nonce.split(".", 1)[0]) > 900:
+                self._login_page("Login page expired. Please sign in again.")
+                return
             correct = hmac.compare_digest(fields.get("username", ""), os.getenv("ADMIN_USER", ""))
             correct &= hmac.compare_digest(fields.get("password", ""), os.getenv("ADMIN_PASSWORD", ""))
             if not correct:
