@@ -8,6 +8,7 @@ import logging
 import os
 
 import request_store
+import creative_templates
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import urlsplit
@@ -271,6 +272,11 @@ def main():
     if not token:
         raise RuntimeError("Missing BOT_TOKEN or TELEGRAM_BOT_TOKEN in Railway variables.")
     request_store.init_db()
+    try:
+        creative_templates.init_db()
+        log.info("Creative template database initialized: PostgreSQL")
+    except Exception as exc:
+        log.error("Creative template storage initialization failed: %s", type(exc).__name__)
     log.info("Request database initialized: %s", "PostgreSQL" if os.getenv("DATABASE_URL") else "SQLite")
     app = Application.builder().token(token).post_init(on_ready).build()
     app.add_handler(CommandHandler("start", start))
