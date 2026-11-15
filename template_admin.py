@@ -172,8 +172,34 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if not origin:
             return True
-        parsed = urlsplit(origin)
-        return parsed.scheme == "https" and parsed.netloc == self.headers.get("Host")
+        try:
+            parsed = urlsplit(origin)
+            # Railway terminates HTTPS at its proxy; its upstream Host
+            # header may differ from the public origin seen by the browser.
+            # Trust only the service's explicitly approved public domains.
+            allowed = {
+                "pixel-production-f03d.up.railway.app",
+                "digisellabot.site",
+                (os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip().lower(),
+            }
+            allowed.update(
+                host.strip().lower()
+                for host in os.getenv("TEMPLATE_ADMIN_ALLOWED_HOSTS", "").split(",")
+                if host.strip()
+            )
+            return (
+                parsed.scheme == "https"
+                and parsed.hostname is not None
+                and parsed.hostname.lower() in allowed
+                and parsed.port in (None, 443)
+                and not parsed.username
+                and not parsed.password
+                and not parsed.path
+                and not parsed.query
+                and not parsed.fragment
+            )
+        except ValueError:
+            return False
 
     def _login_page(self, message=""):
         warning = ('<div class="note error">' + html.escape(message) + '</div>') if message else ""
