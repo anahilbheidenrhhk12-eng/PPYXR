@@ -14,6 +14,8 @@ import time
 import unicodedata
 
 import creative_admin
+import creative_templates
+import admin_ui
 from email import policy
 from email.parser import BytesParser
 from http.cookies import SimpleCookie
@@ -79,32 +81,9 @@ def _csrf(key, session):
     return _sign(key, "csrf:" + session)
 
 
-def _page(title, inner):
-    return ("""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PPYXR · """ + html.escape(title) + """</title>
-<style>
-:root{color-scheme:dark;font-family:Inter,system-ui,Segoe UI,sans-serif}
-*{box-sizing:border-box}body{margin:0;background:#0c1020;color:#e8ecf7}
-main{max-width:920px;margin:32px auto;padding:0 18px}
-h1{font-size:25px;margin:0 0 7px}h2{font-size:17px}
-small,.muted{color:#94a0b8}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.card{background:#171f33;border:1px solid #2d3b57;border-radius:16px;padding:22px;margin:18px 0}
-input[type=text],input[type=password],input[type=file]{display:block;width:100%;
-background:#0e1528;border:1px solid #44516a;color:#fff;padding:12px;border-radius:9px;margin:8px 0 16px}
-label{display:block;font-size:14px;font-weight:600}
-button,.btn{background:#526af4;color:#fff;border:0;padding:10px 16px;border-radius:9px;
-cursor:pointer;font-weight:650;text-decoration:none;display:inline-block}
-button.danger{background:#943549}button.ghost{background:#303a55}
-.row{display:flex;align-items:center;justify-content:space-between;gap:16px;
-border-bottom:1px solid #2b3550;padding:12px 0;flex-wrap:wrap}
-.row:last-child{border-bottom:0}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.note{padding:12px 14px;border-radius:10px;background:#26324e;color:#d9e4f9;margin:14px 0}
-.error{background:#592937}.success{background:#254838}
-a{color:#a5baff}form.inline{display:inline}code{color:#d4e4ff}
-select{display:block;width:100%;background:#0e1528;color:#fff;border:1px solid #44516a;padding:10px;border-radius:9px;margin:9px 0}
-.preview{display:block;max-width:100%;max-height:450px;margin:14px auto;padding:8px;background:white;border-radius:10px}
-</style></head><body><main>""" + inner + "</main></body></html>").encode("utf-8")
+def _page(title, inner, active="dashboard"):
+    return admin_ui.page(title, inner, active)
+
 
 
 def _friendly_size(n):
@@ -127,7 +106,7 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; "
+            "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self'; form-action 'self'; "
             "frame-ancestors 'none'; base-uri 'none'",
         )
         for k, v in (extra or {}).items():
@@ -186,7 +165,7 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
 <p class="muted"><small>Credentials: Railway → PIXEL → Variables → ADMIN_USER / ADMIN_PASSWORD.</small></p>
 </section>""")
         body = body.replace("__LOGIN_NONCE__", html.escape(login_nonce, quote=True))
-        self._send(200, _page("Login", body))
+        self._send(200, _page("Login", body, active="login"))
 
     def _dashboard(self, session, message=""):
         key = _admin_key()
@@ -236,6 +215,12 @@ This library does not automatically change eligibility-verification workflows.</
         route = urlsplit(self.path)
         if route.path == "/health":
             self._send(200, b"ok\n", "text/plain; charset=utf-8")
+            return
+        if route.path == "/admin/assets/styles.css":
+            self._send(200, admin_ui.STYLE.encode("utf-8"), "text/css; charset=utf-8")
+            return
+        if route.path == "/admin/assets/app.js":
+            self._send(200, admin_ui.SCRIPT.encode("utf-8"), "text/javascript; charset=utf-8")
             return
         if route.path in ("/admin", "/admin/"):
             self._redirect("/admin/templates")
