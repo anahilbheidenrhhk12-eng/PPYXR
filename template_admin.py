@@ -175,12 +175,13 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
 <p class="muted">Private administrator access</p></div></div>
 <section class="card">""" + warning + """
 <form method="post" action="/admin/templates/login">
-<input type="hidden" name="login_nonce" value="""" + login_nonce + """">
+<input type="hidden" name="login_nonce" value="__LOGIN_NONCE__">
 <label>Admin username</label><input type="text" name="username" required autocomplete="username">
 <label>Admin password</label><input type="password" name="password" required autocomplete="current-password">
 <button type="submit">Sign in</button></form>
 <p class="muted"><small>Credentials: Railway → PIXEL → Variables → ADMIN_USER / ADMIN_PASSWORD.</small></p>
 </section>""")
+        body = body.replace("__LOGIN_NONCE__", html.escape(login_nonce, quote=True))
         self._send(200, _page("Login", body))
 
     def _dashboard(self, session, message=""):
