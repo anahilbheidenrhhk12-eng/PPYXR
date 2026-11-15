@@ -253,6 +253,7 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
             "/admin/templates/login", "/admin/templates/logout",
             "/admin/templates/upload", "/admin/templates/delete",
             "/admin/templates/map", "/admin/templates/record",
+            "/admin/templates/record_update", "/admin/templates/record_delete",
         ):
             self._send(404, b"Not found", "text/plain")
             return
