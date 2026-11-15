@@ -12,6 +12,8 @@ import secrets
 import tempfile
 import time
 import unicodedata
+
+import creative_admin
 from email import policy
 from email.parser import BytesParser
 from http.cookies import SimpleCookie
@@ -100,6 +102,8 @@ border-bottom:1px solid #2b3550;padding:12px 0;flex-wrap:wrap}
 .note{padding:12px 14px;border-radius:10px;background:#26324e;color:#d9e4f9;margin:14px 0}
 .error{background:#592937}.success{background:#254838}
 a{color:#a5baff}form.inline{display:inline}code{color:#d4e4ff}
+select{display:block;width:100%;background:#0e1528;color:#fff;border:1px solid #44516a;padding:10px;border-radius:9px;margin:9px 0}
+.preview{display:block;max-width:100%;max-height:450px;margin:14px auto;padding:8px;background:white;border-radius:10px}
 </style></head><body><main>""" + inner + "</main></body></html>").encode("utf-8")
 
 
@@ -123,7 +127,7 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
+            "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; form-action 'self'; "
             "frame-ancestors 'none'; base-uri 'none'",
         )
         for k, v in (extra or {}).items():
@@ -163,7 +167,7 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
         try:
             return {k: v[0] for k, v in parse_qs(
                 body.decode("utf-8"), keep_blank_values=True,
-                max_num_fields=12,
+                max_num_fields=120,
             ).items()}
         except (UnicodeError, ValueError):
             return {}
@@ -196,11 +200,12 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
         for path in files:
             name = html.escape(path.name, quote=True)
             link = "/admin/templates/file?name=" + quote(path.name)
+            editor_link = ('<a class="btn" href="/admin/templates/edit?name=' + quote(path.name) + '">Configure text</a>') if path.suffix.lower() == ".svg" else ""
             items.append(
                 '<div class="row"><div><strong>' + name + '</strong>'
                 '<div class="muted"><small>' + _friendly_size(path.stat().st_size) + '</small></div></div>'
                 '<div class="actions"><a class="btn" href="' + html.escape(link, quote=True)
-                + '">Download</a><form method="post" action="/admin/templates/delete" class="inline">'
+                + '">Download</a>' + editor_link + '<form method="post" action="/admin/templates/delete" class="inline">'
                 '<input type="hidden" name="csrf" value="' + csrf + '">'
                 '<input type="hidden" name="name" value="' + name + '">'
                 '<button type="submit" class="danger">Delete</button></form></div></div>'
@@ -250,6 +255,8 @@ This library does not automatically change eligibility-verification workflows.</
             params = parse_qs(route.query)
             self._dashboard(session, (params.get("msg") or [""])[0])
             return
+        if creative_admin.do_get(self, route, session):
+            return
         if route.path == "/admin/templates/file":
             name = (parse_qs(route.query).get("name") or [""])[0]
             if not _valid_name(name):
@@ -271,6 +278,7 @@ This library does not automatically change eligibility-verification workflows.</
         if route not in (
             "/admin/templates/login", "/admin/templates/logout",
             "/admin/templates/upload", "/admin/templates/delete",
+            "/admin/templates/map", "/admin/templates/record",
         ):
             self._send(404, b"Not found", "text/plain")
             return
@@ -362,7 +370,10 @@ This library does not automatically change eligibility-verification workflows.</
                     if temp and os.path.exists(temp):
                         os.unlink(temp)
                 LOG.info("Admin uploaded template %s (%d bytes)", name, len(payload))
-                self._redirect("/admin/templates?msg=Template+saved+successfully")
+                if name.lower().endswith(".svg"):
+                    self._redirect("/admin/templates/edit?name=" + quote(name))
+                else:
+                    self._redirect("/admin/templates?msg=Template+saved+successfully")
                 return
             except Exception as exc:
                 LOG.warning("Template upload failed: %s", type(exc).__name__)
@@ -373,6 +384,8 @@ This library does not automatically change eligibility-verification workflows.</
         fields = self._fields(body)
         if not hmac.compare_digest(fields.get("csrf", ""), _csrf(key, session)):
             self._send(403, b"Invalid form token", "text/plain")
+            return
+        if creative_admin.do_post(self, route, fields):
             return
         if route == "/admin/templates/logout":
             self._redirect("/admin/templates", (
