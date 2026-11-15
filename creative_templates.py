@@ -356,3 +356,57 @@ def overview():
         "records": sum(counts.values()),
         "recent": recent,
     }
+
+
+def get_row(name, row_id):
+    _name(name)
+    with _db() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT id, contents, created_at FROM creative_template_rows "
+                "WHERE template_name=%s AND id=%s",
+                (name, int(row_id)),
+            )
+            row = cur.fetchone()
+    if not row:
+        raise ValueError("This content record was not found")
+    return row
+
+
+def update_row(name, row_id, values):
+    _name(name)
+    allowed = saved_fields(name)
+    if not allowed:
+        raise ValueError("Configure the text mapping first")
+    cleaned = {}
+    for field in allowed:
+        value = str(values.get(field, "")).strip()
+        if len(value) > 180:
+            raise ValueError("Text values cannot exceed 180 characters")
+        cleaned[field] = value
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE creative_template_rows SET contents=%s::jsonb "
+                "WHERE template_name=%s AND id=%s RETURNING id",
+                (json.dumps(cleaned), name, int(row_id)),
+            )
+            updated = cur.fetchone()
+    if not updated:
+        raise ValueError("This content record was not found")
+    return updated[0]
+
+
+def delete_row(name, row_id):
+    _name(name)
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM creative_template_rows WHERE template_name=%s "
+                "AND id=%s RETURNING id",
+                (name, int(row_id)),
+            )
+            deleted = cur.fetchone()
+    if not deleted:
+        raise ValueError("This content record was not found")
+    return deleted[0]
