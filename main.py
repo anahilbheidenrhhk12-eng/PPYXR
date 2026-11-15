@@ -284,6 +284,7 @@ def main():
     if not token:
         raise RuntimeError("Missing BOT_TOKEN or TELEGRAM_BOT_TOKEN in Railway variables.")
     request_store.init_db()
+    log.info("Request database initialized: %s", "PostgreSQL" if os.getenv("DATABASE_URL") else "SQLite")
     app = Application.builder().token(token).post_init(on_ready).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("verify", verify))
