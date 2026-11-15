@@ -329,3 +329,30 @@ def render(name, row_id=None):
 def pristine_preview(name):
     return ET.tostring(_clean_svg(_template(name).read_bytes()),
                        encoding="utf-8", xml_declaration=True)
+
+
+def overview():
+    """Return aggregate mapping and content totals for the admin dashboard."""
+    with _db() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("""
+                SELECT template_name, source_checksum, layer_map, updated_at
+                FROM creative_template_mappings
+            """)
+            mappings = {row["template_name"]: row for row in cur.fetchall()}
+            cur.execute("""
+                SELECT template_name, COUNT(*) AS count
+                FROM creative_template_rows GROUP BY template_name
+            """)
+            counts = {row["template_name"]: int(row["count"]) for row in cur.fetchall()}
+            cur.execute("""
+                SELECT id, template_name, created_at
+                FROM creative_template_rows ORDER BY id DESC LIMIT 5
+            """)
+            recent = cur.fetchall()
+    return {
+        "mappings": mappings,
+        "counts": counts,
+        "records": sum(counts.values()),
+        "recent": recent,
+    }
