@@ -3,8 +3,11 @@
 This entrypoint provides the available Telegram interface and link-format check.
 The original automatic verification workflow is not complete in this repository.
 """
+import asyncio
 import logging
 import os
+
+import request_store
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import urlsplit
@@ -29,6 +32,7 @@ OFFICIAL_URL = "https://one.google.com/ai-student"
 COMMANDS = [
     BotCommand("start", "Open main menu"),
     BotCommand("verify", "Student verification instructions"),
+    BotCommand("myrequests", "Track submitted requests"),
     BotCommand("help", "Help and support"),
     BotCommand("status", "Bot status"),
 ]
@@ -37,6 +41,7 @@ COMMANDS = [
 def menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎓 Verify Student", callback_data="verify")],
+        [InlineKeyboardButton("📋 My Requests", callback_data="myrequests")],
         [InlineKeyboardButton("📖 Help & Guide", callback_data="help")],
         [InlineKeyboardButton("📩 Support", url="https://t.me/DigHelptbot"),
          InlineKeyboardButton("👥 Support Group", url="https://t.me/digitrust22")],
@@ -85,6 +90,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 WELCOME TO PPYXR! 🎓\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎓 Student Verification\n"
+        "📋 My Requests\n"
         "📖 Help & Guide\n"
         "📩 Support & Community\n\n"
         "Choose an option below:",
@@ -99,11 +105,10 @@ async def verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "1. Open the official student offer page.\n"
         "2. Choose the student plan and follow the official verification steps.\n"
-        "3. If you already have a verification URL, send 1–3 full links,\n"
-        "   one per line, to check their format:\n"
+        "3. Send 1–3 full links, one per line, to receive a tracking ID:\n"
         "https://services.sheerid.com/verify/...\n\n"
-        "ℹ️ A link-format check does not verify student eligibility. "
-        "The original automatic verification processor is not available in this deployment."
+        "ℹ️ The bot automatically records the request and issues a tracking ID. "
+        "Only the official provider can confirm eligibility; automatic submission is not enabled."
     )
     await update.effective_message.reply_text(
         text, reply_markup=verify_menu(), disable_web_page_preview=True
@@ -115,10 +120,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💬 HELP CENTER & USER GUIDE\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "🎓 Verify Student — open the official student offer and follow its steps.\n"
-        "🔗 Send a services.sheerid.com/verify/ link to check its format.\n"
+        "🔗 Send 1–3 services.sheerid.com/verify/ links to register a request automatically.\n"
+        "📋 /myrequests — track your submitted requests.\n"
         "📩 Support: @DigHelptbot\n"
         "👥 Group: https://t.me/digitrust22\n\n"
-        "The original automatic verification processor is not configured here.",
+        "Request tracking is automatic. Official eligibility verification is done by the provider.",
         reply_markup=guide_menu(), disable_web_page_preview=True,
     )
 
@@ -126,7 +132,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         "✅ PPYXR Telegram bot is online.\n"
-        "ℹ️ Automatic verification is not active.",
+        "📋 Automated request intake and tracking: active.\n"
+        "ℹ️ Official eligibility verification is not automated.",
         reply_markup=menu(),
     )
 
@@ -143,7 +150,37 @@ def is_verification_url(value):
         return False
 
 
+async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user or update.effective_chat.type != "private":
+        await update.effective_message.reply_text("Please use this command in a private chat.")
+        return
+    requests = await asyncio.to_thread(request_store.recent_for_user, user.id, 10)
+    if not requests:
+        await update.effective_message.reply_text(
+            "📋 No requests found. Use /verify to submit a link.",
+            reply_markup=menu(),
+        )
+        return
+    rows = ["📋 YOUR REQUESTS", "━━━━━━━━━━━━━━━━━━━━━━"]
+    for req in requests:
+        rows.append(
+            f"#{req['id']} · {req['created_at'][:10]} · "
+            f"{req['link_count']} link(s)\n"
+            "⏳ Awaiting official verification"
+        )
+    rows.append("\nℹ️ These are tracking records, not confirmed verification results.")
+    await update.effective_message.reply_text(
+        "\n\n".join(rows), reply_markup=menu()
+    )
+
+
 async def text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or update.effective_chat.type != "private":
+        await update.effective_message.reply_text(
+            "For privacy, send verification links to the bot in a private chat."
+        )
+        return
     msg = (update.effective_message.text or "").strip()
     links = [value.strip() for value in msg.splitlines() if value.strip()]
     if not context.user_data.get("expect_link"):
@@ -160,12 +197,20 @@ async def text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=verify_menu(), disable_web_page_preview=True,
         )
         return
+
+    # Privacy: store only the sender ID, number of links, and timestamps.
+    # Do not save or forward URLs or any personal data from a verification link.
+    request_id = await asyncio.to_thread(
+        request_store.submit, update.effective_user.id, len(links)
+    )
     context.user_data.pop("expect_link", None)
     await update.effective_message.reply_text(
-        f"✅ {len(links)} verification link(s) have a valid URL format.\n\n"
-        "This is only a format check. Your eligibility is not confirmed, "
-        "and this bot does not automatically submit verification requests. "
-        "Continue verification on the official website.",
+        f"✅ Request #{request_id} received automatically.\n"
+        f"🔗 Links: {len(links)}\n"
+        "📋 Status: Awaiting official verification\n\n"
+        "Your link(s) were not stored or sent to another service. "
+        "Complete eligibility verification with the official provider. "
+        "Use /myrequests to view your tracking status.",
         reply_markup=verify_menu(), disable_web_page_preview=True,
     )
 
@@ -178,6 +223,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await verify(update, context)
     elif action == "help":
         await help_command(update, context)
+    elif action == "myrequests":
+        await my_requests(update, context)
     elif action in ("home", "cancel"):
         context.user_data.pop("expect_link", None)
         await q.message.reply_text("🏠 PPYXR MAIN MENU", reply_markup=menu())
@@ -232,12 +279,14 @@ def main():
     token = (os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
     if not token:
         raise RuntimeError("Missing BOT_TOKEN or TELEGRAM_BOT_TOKEN in Railway variables.")
+    request_store.init_db()
     app = Application.builder().token(token).post_init(on_ready).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("verify", verify))
+    app.add_handler(CommandHandler("myrequests", my_requests))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status))
-    app.add_handler(CallbackQueryHandler(callback, pattern="^(verify|help|home|cancel)$"))
+    app.add_handler(CallbackQueryHandler(callback, pattern="^(verify|help|myrequests|home|cancel)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_input))
     port = int(os.getenv("PORT", "8080"))
     Thread(
