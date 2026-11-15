@@ -164,10 +164,14 @@ async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     rows = ["📋 YOUR REQUESTS", "━━━━━━━━━━━━━━━━━━━━━━"]
     for req in requests:
+        # Display the stored status so edits in Railway's Postgres Data panel
+        # are reflected in /myrequests, without inventing verification outcomes.
+        value = str(req.get("status") or "awaiting_official_verification")
+        label = "".join(ch for ch in value[:60] if ch.isprintable()).replace("_", " ")
         rows.append(
             f"#{req['id']} · {req['created_at'][:10]} · "
             f"{req['link_count']} link(s)\n"
-            "⏳ Awaiting official verification"
+            f"📍 Status: {label}"
         )
     rows.append("\nℹ️ These are tracking records, not confirmed verification results.")
     await update.effective_message.reply_text(
