@@ -1,0 +1,10 @@
+ChromeDriver/
+Proxy/
+Resources/
+images/
+Output/
+__pycache__/
+*.pyc
+*.pdf
+*.zip
+.git/
