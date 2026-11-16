@@ -115,6 +115,7 @@ def page(title, body, active="dashboard"):
         '<meta name="theme-color" content="#10131f">'
         '<title>' + title_safe + ' · DIGI PRO STUDIO</title>'
         '<link rel="stylesheet" href="/admin/assets/styles.css">'
+        '<link rel="stylesheet" href="/admin/assets/raster.css">'
         '<script defer src="/admin/assets/app.js"></script>'
         '</head><body>' + content + '</body></html>'
     ).encode("utf-8")
