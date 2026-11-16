@@ -157,14 +157,15 @@ function draw(){
 function syncList(){
  const host=q('[data-raster-layers]');if(!host)return;
  host.textContent='';
- if(!layers.length){const empty=document.createElement('div');empty.className='raster-empty';empty.textContent='No text areas yet. Draw a region or use Smart suggest.';host.appendChild(empty);}
+ if(!layers.length){const empty=document.createElement('div');empty.className='raster-empty';empty.textContent='No regions yet. Draw manually or detect existing marketing text with OCR.';host.appendChild(empty);}
  layers.forEach((item,i)=>{
   const button=document.createElement('button');button.type='button';
   button.className='raster-layer'+(selected===item.id?' is-active':'');
   const left=document.createElement('span');
   const title=document.createElement('strong');title.textContent=(i+1)+'. '+(fields[item.field]||item.field);
-  const desc=document.createElement('small');desc.textContent='Position '+Math.round(item.x)+'%, '+Math.round(item.y)+'%'; // percentages adjusted below
-  desc.textContent='X '+Math.round(item.x/10)+'% · Y '+Math.round(item.y/10)+'%';
+  const desc=document.createElement('small');
+  const origin=item.detected?(' · OCR '+Math.round(item.confidence*100)+'%: '+item.detected):'';
+  desc.textContent=(item.shape||'rect').toUpperCase()+' · X '+Math.round(item.x/10)+'% · Y '+Math.round(item.y/10)+'%'+origin;
   left.append(title,desc);
   const sw=document.createElement('span');sw.className='layer-sw';sw.style.background=item.color||colorDefault;
   button.append(left,sw);
@@ -326,49 +327,69 @@ q('[data-save-json]').addEventListener('click',async ()=>{
  }catch(e){note(e.message||'Unable to save',false);}
  finally{saveBtn.disabled=false;}
 });
-q('[data-auto]').addEventListener('click',()=>{
+q('[data-auto]').addEventListener('click',async ()=>{
  if(!imageReady)return;
- if(layers.length>28){note('Too many text regions for Smart suggest.',false);return;}
- const added=[];
- const candidates=['title','subtitle','price','cta'];
- const already=new Set(layers.map(l=>l.field));
- const thumb=document.createElement('canvas');thumb.width=160;thumb.height=160;
- const t=thumb.getContext('2d',{willReadFrequently:true});t.drawImage(image,0,0,160,160);
- const pixels=t.getImageData(0,0,160,160).data;
- const gray=(x,y)=>{const i=(Math.floor(y)*160+Math.floor(x))*4;return (pixels[i]*.21+pixels[i+1]*.72+pixels[i+2]*.07)};
- function score(box){
-  let sum=0,count=0;
-  const cx=box.x/1000*160,cy=box.y/1000*160,cw=box.w/1000*160,ch=box.h/1000*160;
-  for(let y=Math.max(2,Math.floor(cy)+2);y<Math.min(157,cy+ch-2);y+=5){
-   for(let x=Math.max(2,Math.floor(cx)+2);x<Math.min(157,cx+cw-2);x+=5){
-    sum+=Math.abs(gray(x+2,y)-gray(x-2,y))+Math.abs(gray(x,y+2)-gray(x,y-2));count++;
-   }
+ const button=q('[data-auto]');
+ if(layers.length>=32){note('A template supports up to 32 regions. Remove some before scanning.',false);return;}
+ button.disabled=true;
+ note('Reading visible promotional text with local OCR. No regions will be added unless text is recognized.');
+ try{
+  const response=await fetch('/admin/templates/raster/suggest?name='+encodeURIComponent(name),{
+   method:'GET',credentials:'same-origin',headers:{'Accept':'application/json'},
+   cache:'no-store'
+  });
+  const info=await response.json();
+  if(!response.ok)throw new Error(info.error||'Text detection unavailable');
+  if(!Array.isArray(info.suggestions)||!info.suggestions.length){
+   note(info.message||'No eligible text was detected. No labels were placed.',false);
+   return;
   }
-  return count?sum/count:Infinity;
- }
- for(const field of candidates){
-  if(already.has(field)||added.length>=3)continue;
-  const size=field==='title'?{w:680,h:135}:field==='subtitle'?{w:580,h:98}:field==='price'?{w:285,h:110}:{w:320,h:100};
-  let best=null,bestScore=Infinity;
-  for(let y=70;y+size.h<=935;y+=75){
-   for(let x=55;x+size.w<=945;x+=68){
-    const box={x,y,w:size.w,h:size.h};
-    const blocked=layers.concat(added).some(l=>{
-     const ax=Math.max(l.x,box.x),ay=Math.max(l.y,box.y);
-     const overlap=Math.max(0,Math.min(l.x+l.w,box.x+box.w)-ax)*Math.max(0,Math.min(l.y+l.h,box.y+box.h)-ay);
-     return overlap>box.w*box.h*.09;
-    });
-    if(blocked)continue;
-    const value=score(box);
-    if(value<bestScore){best=box;bestScore=value;}
+  let added=0,skipped=0;
+  const proposed=[];
+  for(const item of info.suggestions){
+   if(!Object.prototype.hasOwnProperty.call(fields,item.field)){
+    skipped++;continue;
    }
+   if(layers.some(l=>l.field===item.field)||proposed.some(l=>l.field===item.field)){
+    skipped++;continue;
+   }
+   if(layers.length+proposed.length>=32)break;
+   const box={x:item.x,y:item.y,w:item.w,h:item.h};
+   if(!['x','y','w','h'].every(k=>Number.isFinite(box[k]))||
+      box.w<15||box.h<15||box.x<0||box.y<0||
+      box.x+box.w>1000.01||box.y+box.h>1000.01){
+    skipped++;continue;
+   }
+   const overlaps=layers.concat(proposed).some(l=>{
+    const x=Math.max(l.x,box.x),y=Math.max(l.y,box.y);
+    const area=Math.max(0,Math.min(l.x+l.w,box.x+box.w)-x)*
+               Math.max(0,Math.min(l.y+l.h,box.y+box.h)-y);
+    return area>box.w*box.h*.2;
+   });
+   if(overlaps){skipped++;continue;}
+   const layer={
+    id:uid(),field:item.field,shape:'rect',
+    x:box.x,y:box.y,w:box.w,h:box.h,
+    size:range(8,120,item.size||34),
+    color:item.color||colorDefault,
+    align:item.align||'left',bold:!!item.bold,
+    detected:typeof item.detected==='string'?item.detected.slice(0,80):'',
+    confidence:typeof item.confidence==='number'?item.confidence:0
+   };
+   proposed.push(layer);
   }
-  if(best){added.push({...best,field,id:uid(),size:field==='title'?50:35,
-                        color:colorDefault,align:'left',bold:field!=='subtitle'});}
- }
- if(!added.length){note('No clear empty spaces were detected. Use Draw region.',false);return;}
- remember();layers=layers.concat(added);selected=added[0].id;preview=false;setMode('select');sync();
- note('Smart suggest positioned '+added.length+' promotional text areas in lower-detail regions. Please review them before saving.',true);
+  if(!proposed.length){
+   note('Detected text did not provide new valid, non-overlapping promotional regions. Existing work was kept.',false);
+   return;
+  }
+  remember();
+  layers=layers.concat(proposed);added=proposed.length;
+  selected=proposed[0].id;preview=false;setMode('select');sync();
+  note('OCR found '+added+' matching promotional text region'+(added===1?'':'s')+
+      ' at the actual text coordinates. Check and save the mapping.',true);
+ }catch(err){
+  note((err&&err.message)||'Could not read the uploaded artwork.',false);
+ }finally{button.disabled=false;}
 });
 window.addEventListener('resize',draw);
 image.onload=()=>{
@@ -377,7 +398,7 @@ image.onload=()=>{
  canvas.width=Math.max(1,Math.round(image.naturalWidth*ratio));
  canvas.height=Math.max(1,Math.round(image.naturalHeight*ratio));
  canvas.style.aspectRatio=canvas.width+'/'+canvas.height;
- note(layers.length?'Existing text regions loaded. Drag or resize to adjust.':'Draw text areas, or try Smart suggest.');
+ note(layers.length?'Existing text regions loaded. Drag or resize to adjust.':'Draw regions manually or detect existing marketing text with OCR.');
  sync();
 };
 image.onerror=()=>note('Unable to load image preview. Check file access.',false);
