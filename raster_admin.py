@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, quote
 
 import admin_ui
 import raster_creatives
+import raster_smart
 
 LOG = logging.getLogger("PPYXR.raster_admin")
 
@@ -49,7 +50,7 @@ def editor(handler, session, name):
             '<button class="btn" type="button" data-draw>'
             + admin_ui.icon("plus", 15) + ' Draw text area</button>'
             '<button class="toolbar-button" type="button" data-auto>'
-            + admin_ui.icon("sparkle", 15) + ' Smart suggest</button>'
+            + admin_ui.icon("sparkle", 15) + ' Detect marketing text (OCR)</button>'
             '<button class="toolbar-button" type="button" data-polygon>'
             + admin_ui.icon("edit", 14) + ' Polygon</button>'
             '<button class="toolbar-button" type="button" data-lasso>'
@@ -98,8 +99,9 @@ def editor(handler, session, name):
             + controls +
             '<div class="raster-divider"></div>'
             '<div class="raster-tip">' + admin_ui.icon("info", 15)
-            + '<span>Smart suggest looks for visually quieter areas of the artwork. '
-            'Review each placement manually before saving.</span></div>'
+            + '<span>Text detection reads the uploaded artwork and suggests regions only when '
+            'promotional text is recognized. It does not place random labels in blank areas. '
+            'Always review the results before saving.</span></div>'
             '<div class="raster-layer-list" data-raster-layers></div>'
             '<div class="raster-toolbar" style="margin-top:12px">'
             '<button class="toolbar-button" type="button" data-undo>'
@@ -281,6 +283,20 @@ def do_get(handler, route, session):
         return False
     params = parse_qs(route.query)
     name = (params.get("name") or [""])[0]
+    if path == "/admin/templates/raster/suggest":
+        try:
+            result = raster_smart.suggest(name)
+            payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
+            handler._send(200, payload, "application/json; charset=utf-8", {
+                "Cache-Control": "no-store"
+            })
+        except Exception as exc:
+            LOG.warning("Smart OCR failed: %s", type(exc).__name__)
+            body = json.dumps({"error": "OCR is temporarily unavailable for this image"}).encode("utf-8")
+            handler._send(503, body, "application/json; charset=utf-8", {
+                "Cache-Control": "no-store"
+            })
+        return True
     if path == "/admin/templates/raster/edit":
         editor(handler, session, name)
         return True
