@@ -300,6 +300,13 @@ q('[data-delete]').addEventListener('click',()=>{
  if(!active())return;remember();layers=layers.filter(l=>l.id!==selected);
  selected=layers.length?layers[layers.length-1].id:null;sync();note('Selected region removed. Save mapping to persist.');
 });
+const clearRegions=q('[data-clear-regions]');
+if(clearRegions)clearRegions.addEventListener('click',()=>{
+ if(!layers.length)return;
+ if(!window.confirm('Clear all text regions from the editor? The saved mapping stays unchanged until you save again.'))return;
+ remember();layers=[];selected=null;preview=false;sync();
+ note('Regions cleared in the editor. Draw new text regions and save to replace the previous mapping.');
+});
 q('[data-undo]').addEventListener('click',()=>{
  if(!history.length){note('No changes to undo.');return;}
  layers=JSON.parse(history.pop());selected=layers.length?layers[layers.length-1].id:null;sync();note('Last change undone.');
