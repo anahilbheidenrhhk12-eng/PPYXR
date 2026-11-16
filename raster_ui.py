@@ -83,12 +83,26 @@ function regionPx(box){return {
 function sample(field){return ({
  title:'YOUR HEADLINE',subtitle:'Promotional subtitle',brand:'YOUR BRAND',product:'PRODUCT NAME',
  price:'$49.00',date:'SALE ENDS SOON',contact_email:'contact@example.com',
- description:'Write the campaign description here',cta:'SHOP NOW'
+ description:'Write the campaign description here',cta:'SHOP NOW',campaign_name:'CAMPAIGN',offer_text:'SPECIAL OFFER',website:'example.com',discount_label:'SAVE 20%',custom_1:'EXTRA MESSAGE',custom_2:'NEW ARRIVAL',custom_3:'FEATURED',custom_4:'YOUR MESSAGE'
 })[field]||'PROMOTIONAL TEXT';}
+function shapePath(layer){
+ ctx.beginPath();
+ if(Array.isArray(layer.points)&&layer.points.length>=3){
+  for(let i=0;i<layer.points.length;i++){
+   const p=layer.points[i];
+   const x=p.x/1000*canvas.width,y=p.y/1000*canvas.height;
+   if(!i)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+ }else{
+  const r=regionPx(layer);ctx.rect(r.x,r.y,r.w,r.h);
+ }
+}
 function drawText(layer,alpha){
  const r=regionPx(layer);
  const px=Math.max(10,layer.size/1000*canvas.width);
  ctx.save();ctx.globalAlpha=alpha;
+ if(Array.isArray(layer.points)&&layer.points.length>=3){shapePath(layer);ctx.clip();}
  ctx.fillStyle=layer.color||colorDefault;
  ctx.font=(layer.bold?'700 ':'500 ')+px+'px system-ui,Arial,sans-serif';
  const text=sample(layer.field);
@@ -117,11 +131,11 @@ function draw(){
   const r=regionPx(layer),isActive=layer.id===selected;
   ctx.save();
   ctx.fillStyle=isActive?'rgba(131,119,255,.13)':'rgba(68,210,171,.07)';
-  ctx.fillRect(r.x,r.y,r.w,r.h);
+  shapePath(layer);ctx.fill();
   ctx.setLineDash(isActive?[]:[7,5]);
   ctx.lineWidth=Math.max(1.5,canvas.width/600);
   ctx.strokeStyle=isActive?'#7865ff':'#2bb895';
-  ctx.strokeRect(r.x,r.y,r.w,r.h);
+  ctx.stroke();
   ctx.setLineDash([]);
   const title=fields[layer.field]||layer.field;
   const font=Math.max(12,canvas.width/78);
@@ -170,12 +184,13 @@ function syncProps(){
  q('[data-selected-label]').textContent=fields[l.field]||l.field;
 }
 function sync(){syncList();syncProps();draw();}
-function newLayer(box,field){
+function newLayer(box,field,shape='rect',points=null){
  if(layers.length>=32){note('A template supports up to 32 text areas.',false);return;}
  remember();
  const layer={id:uid(),field:field||'title',x:Math.round(box.x*100)/100,y:Math.round(box.y*100)/100,
               w:Math.round(box.w*100)/100,h:Math.round(box.h*100)/100,
               size:34,color:colorDefault,align:'left',bold:true};
+ if(shape!=='rect'&&Array.isArray(points)){layer.shape=shape;layer.points=points;}
  layers.push(layer);selected=layer.id;
  sync();note('Text region added. Select a field and adjust formatting.');
 }
@@ -183,7 +198,17 @@ function hitTest(pt){
  for(let i=layers.length-1;i>=0;i--){
   const l=layers[i],inside=pt.x>=l.x&&pt.y>=l.y&&pt.x<=l.x+l.w&&pt.y<=l.y+l.h;
   if(inside){
-   return {l,handle:Math.abs(pt.x-(l.x+l.w))<25&&Math.abs(pt.y-(l.y+l.h))<25};
+   const handle=Math.abs(pt.x-(l.x+l.w))<25&&Math.abs(pt.y-(l.y+l.h))<25;
+   let contained=!Array.isArray(l.points);
+   if(!contained){
+    let odd=false;
+    for(let k=0,j=l.points.length-1;k<l.points.length;j=k++){
+     const a=l.points[k],b=l.points[j];
+     if((a.y>pt.y)!==(b.y>pt.y)&&pt.x<(b.x-a.x)*(pt.y-a.y)/(b.y-a.y)+a.x)odd=!odd;
+    }
+    contained=odd;
+   }
+   if(handle||contained)return {l,handle};
   }
  }
  return null;
@@ -212,9 +237,20 @@ canvas.addEventListener('pointermove',(e)=>{
  if(drag.type==='move'){
   l.x=Math.round(range(0,1000-l.w,drag.original.x+dx)*100)/100;
   l.y=Math.round(range(0,1000-l.h,drag.original.y+dy)*100)/100;
+  if(Array.isArray(drag.original.points))l.points=drag.original.points.map(p=>({
+   x:Math.round((p.x+l.x-drag.original.x)*100)/100,
+   y:Math.round((p.y+l.y-drag.original.y)*100)/100
+  }));
  }else{
   l.w=Math.round(range(15,1000-l.x,drag.original.w+dx)*100)/100;
   l.h=Math.round(range(15,1000-l.y,drag.original.h+dy)*100)/100;
+  if(Array.isArray(drag.original.points)){
+   const orig=drag.original;
+   l.points=orig.points.map(p=>({
+    x:Math.round((l.x+(p.x-orig.x)*l.w/orig.w)*100)/100,
+    y:Math.round((l.y+(p.y-orig.y)*l.h/orig.h)*100)/100
+   }));
+  }
  }
  draw();
 });
@@ -232,6 +268,28 @@ function finish(){
  drag=null;sync();
 }
 q('[data-draw]').addEventListener('click',()=>{preview=false;setMode('draw');});
+window.DigiRasterEditor={
+ canvas,ctx,
+ isReady:()=>imageReady,
+ addFreeRegion(points,shape){
+  if(!imageReady||!Array.isArray(points)||points.length<3||layers.length>=32)return false;
+  const step=Math.max(1,Math.ceil(points.length/78));
+  const simplified=points.filter((_,i)=>i%step===0||i===points.length-1).slice(0,80);
+  const xs=simplified.map(p=>p.x),ys=simplified.map(p=>p.y);
+  const x=Math.min(...xs),y=Math.min(...ys);
+  const w=Math.max(...xs)-x,h=Math.max(...ys)-y;
+  if(w<15||h<15)return false;
+  preview=false;
+  newLayer({x,y,w,h},q('[data-add-field]').value||'title',shape,simplified);
+  return true;
+ },
+ point(e){
+  const r=canvas.getBoundingClientRect();
+  return {x:range(0,1000,(e.clientX-r.left)/r.width*1000),
+          y:range(0,1000,(e.clientY-r.top)/r.height*1000)};
+ },
+ draw, note
+};
 q('[data-preview]').addEventListener('click',()=>{
  preview=!preview;q('[data-preview]').setAttribute('aria-pressed',String(preview));
  note(preview?'Sample preview enabled. Downloaded output uses actual PostgreSQL data.':'Region outlines restored.');
