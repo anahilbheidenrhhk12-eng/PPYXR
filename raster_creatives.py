@@ -354,3 +354,71 @@ def next_version(name):
             )
             row_id = row[0]
     return row_id, render(name, row_id)
+
+
+def get_record(name, row_id):
+    source_path(name)
+    with _db() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT id, created_at, contents FROM creative_raster_rows "
+                "WHERE template_name=%s AND id=%s", (name, int(row_id))
+            )
+            row = cur.fetchone()
+    if not row:
+        raise ValueError("Content record not found")
+    return row
+
+
+def update_record(name, row_id, values):
+    fields = saved_fields(name)
+    if not fields:
+        raise ValueError("Configure the template first")
+    cleaned = {}
+    for field in fields:
+        value = str(values.get(field, "")).strip()
+        if len(value) > 180:
+            raise ValueError("Text value is too long")
+        cleaned[field] = value
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE creative_raster_rows SET contents=%s::jsonb "
+                "WHERE template_name=%s AND id=%s RETURNING id",
+                (json.dumps(cleaned), name, int(row_id))
+            )
+            row = cur.fetchone()
+    if not row:
+        raise ValueError("Content record not found")
+    return row[0]
+
+
+def delete_record(name, row_id):
+    source_path(name)
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM creative_raster_rows "
+                "WHERE template_name=%s AND id=%s RETURNING id",
+                (name, int(row_id))
+            )
+            row = cur.fetchone()
+    if not row:
+        raise ValueError("Content record not found")
+    return row[0]
+
+
+def overview():
+    with _db() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT template_name, source_checksum, overlays "
+                "FROM creative_raster_mappings"
+            )
+            mappings = {row["template_name"]: row for row in cur.fetchall()}
+            cur.execute(
+                "SELECT template_name, COUNT(*) AS count "
+                "FROM creative_raster_rows GROUP BY template_name"
+            )
+            counts = {row["template_name"]: int(row["count"]) for row in cur.fetchall()}
+    return {"mappings": mappings, "counts": counts, "records": sum(counts.values())}
