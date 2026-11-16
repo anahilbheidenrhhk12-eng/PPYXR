@@ -108,6 +108,8 @@ def editor(handler, session, name):
             + admin_ui.icon("clock", 14) + ' Undo</button>'
             '<button class="toolbar-button" type="button" data-delete>'
             + admin_ui.icon("trash", 14) + ' Delete selected</button>'
+            '<button class="toolbar-button" type="button" data-clear-regions>'
+            + admin_ui.icon("trash", 14) + ' Clear all regions</button>'
             '</div>'
             '<div class="field raster-field-picker"><label>FIELD FOR NEW REGIONS</label>'
             '<select data-add-field>' + options + '</select></div></section>'
