@@ -226,7 +226,7 @@ def dashboard_view(files, data, db_online, token):
     blocks = [
         ("Upload a file", "Build your template library", "upload",
          "/admin/templates?view=upload"),
-        ("Map fields", "Choose editable SVG text layers", "edit",
+        ("Map fields", "Choose regions or editable SVG text layers", "edit",
          "/admin/templates?view=library"),
         ("Manage data", "Generate versions with PostgreSQL", "database",
          "/admin/templates?view=records"),
@@ -239,8 +239,8 @@ def dashboard_view(files, data, db_online, token):
     )
     steps = [
         ("01", "Upload", "Add an SVG exported with editable text layers."),
-        ("02", "Configure", "Review detected text and choose variables to replace."),
-        ("03", "Generate", "Add a content record and download the new SVG."),
+        ("02", "Configure", "Map SVG text or draw text regions on an image."),
+        ("03", "Generate", "Add marketing content records and export new designs."),
     ]
     guide = "".join(
         '<div class="mini-step"><span class="step-num">' + n + '</span>'
@@ -336,6 +336,19 @@ def records_view(files, data, db_online):
             + quote(name) + '">Manage records ' + admin_ui.icon("arrow", 13)
             + '</a></td></tr>'
         )
+    raster = data.get("raster", {"mappings": {}, "counts": {}})
+    for name, config in sorted(raster["mappings"].items(), key=lambda item: item[0].lower()):
+        if not any(file.name == name for file in files):
+            continue
+        layers = config.get("overlays") or []
+        entries.append(
+            '<tr><td class="name-cell">' + esc(name) + '</td>'
+            '<td><span class="badge purple">' + str(len(layers)) + ' text regions</span></td>'
+            '<td>' + str(raster["counts"].get(name, 0)) + '</td>'
+            '<td><a class="btn btn-secondary" href="/admin/templates/raster/records?name='
+            + quote(name) + '">Manage records ' + admin_ui.icon("arrow", 13)
+            + '</a></td></tr>'
+        )
     body = heading(
         "STRUCTURED CONTENT", "Content records",
         "Select a configured template to create, review or download its versions.",
@@ -352,7 +365,7 @@ def records_view(files, data, db_online):
         '<th>Template</th><th>Mapped layers</th><th>Records</th><th>Actions</th></tr>'
         '</thead><tbody>'
         + ("".join(entries) or '<tr><td colspan="4"><p class="muted">'
-           'No templates configured yet. Upload an editable SVG and map its fields.'
+           'No mapped templates found. Open a visual image editor or SVG field editor.'
            '</p></td></tr>')
         + '</tbody></table></div></section>'
     )
@@ -368,7 +381,7 @@ def settings_view(token, files, db_online):
         ("Storage", "/data/templates", "Railway persistent volume"),
         ("Maximum upload", str(MAX_UPLOAD//(1024*1024)) + " MB", "Single-file upload limit"),
         ("Accepted formats", ", ".join(sorted(ALLOWED)), "Stored asset formats"),
-        ("Editable format", "SVG", "Text-layer mapping and rendering"),
+        ("Editable formats", "SVG, PNG, JPG, WEBP", "Text mapping, visual overlays and rendering"),
     ]
     rows = "".join(
         '<div class="setting"><div><strong>' + esc(title)
