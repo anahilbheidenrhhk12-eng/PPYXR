@@ -9,6 +9,7 @@ import os
 
 import request_store
 import creative_templates
+import raster_creatives
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import urlsplit
@@ -275,6 +276,8 @@ def main():
     try:
         creative_templates.init_db()
         log.info("Creative template database initialized: PostgreSQL")
+        raster_creatives.init_db()
+        log.info("Raster image editor initialized: PostgreSQL")
     except Exception as exc:
         log.error("Creative template storage initialization failed: %s", type(exc).__name__)
     log.info("Request database initialized: %s", "PostgreSQL" if os.getenv("DATABASE_URL") else "SQLite")
