@@ -19,6 +19,7 @@ import admin_ui
 import admin_dashboard
 import raster_admin
 import raster_ui
+import raster_shapes_ui
 from email import policy
 from email.parser import BytesParser
 from http.cookies import SimpleCookie
@@ -197,6 +198,9 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
             return
         if route.path == "/admin/assets/raster.js":
             self._send(200, raster_ui.SCRIPT.encode("utf-8"), "text/javascript; charset=utf-8")
+            return
+        if route.path == "/admin/assets/raster-shapes.js":
+            self._send(200, raster_shapes_ui.SCRIPT.encode("utf-8"), "text/javascript; charset=utf-8")
             return
         if route.path == "/admin/assets/app.js":
             self._send(200, admin_ui.SCRIPT.encode("utf-8"), "text/javascript; charset=utf-8")
