@@ -7,3 +7,4 @@ pyvirtualdisplay>=3,<4
 qrcode[pil]>=7.4,<9
 setuptools>=70
 psycopg[binary]>=3.2,<4
+Pillow>=10.4,<13
