@@ -6,16 +6,30 @@ eligibility documentation. Source artwork stays unmodified on disk.
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import secrets
+from zipfile import ZipFile, ZIP_DEFLATED
 from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
-from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
-from creative_templates import FIELDS
+from creative_templates import FIELDS as BASE_FIELDS
+
+FIELDS = dict(BASE_FIELDS)
+FIELDS.update({
+    "campaign_name": "Campaign name",
+    "offer_text": "Offer message",
+    "website": "Website / landing page",
+    "discount_label": "Discount label",
+    "custom_1": "Extra campaign text 1",
+    "custom_2": "Extra campaign text 2",
+    "custom_3": "Extra campaign text 3",
+    "custom_4": "Extra campaign text 4",
+})
 
 SUPPORTED = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_BYTES = 20 * 1024 * 1024
@@ -164,6 +178,39 @@ def validate_overlay(item, seen):
         raise ValueError("Invalid text alignment")
     result["align"] = align
     result["bold"] = item.get("bold") is True
+    shape = item.get("shape", "rect")
+    if shape not in ("rect", "polygon", "freehand"):
+        raise ValueError("Choose rectangle, polygon, or freehand text region")
+    result["shape"] = shape
+    if shape != "rect":
+        points = item.get("points")
+        if not isinstance(points, list) or not 3 <= len(points) <= 80:
+            raise ValueError("Free selection requires 3 to 80 points")
+        valid = []
+        for point in points:
+            if not isinstance(point, dict):
+                raise ValueError("Invalid selection point")
+            rawx, rawy = point.get("x"), point.get("y")
+            if type(rawx) not in (int, float) or type(rawy) not in (int, float):
+                raise ValueError("Selection coordinates must be numeric")
+            if not math.isfinite(rawx) or not math.isfinite(rawy):
+                raise ValueError("Invalid selection coordinates")
+            x, y = round(float(rawx), 2), round(float(rawy), 2)
+            if not (0 <= x <= 1000 and 0 <= y <= 1000):
+                raise ValueError("Selection points must stay inside the image")
+            valid.append({"x": x, "y": y})
+        xs = [p["x"] for p in valid]
+        ys = [p["y"] for p in valid]
+        lo_x, hi_x = min(xs), max(xs)
+        lo_y, hi_y = min(ys), max(ys)
+        if hi_x - lo_x < 15 or hi_y - lo_y < 15:
+            raise ValueError("Selection is too small")
+        # Derive geometry from the polygon itself, never trust a separate box.
+        result.update({
+            "x": lo_x, "y": lo_y,
+            "w": round(hi_x - lo_x, 2), "h": round(hi_y - lo_y, 2),
+            "points": valid,
+        })
     return result
 
 
@@ -278,6 +325,11 @@ def _wrap(draw, content, font, max_width):
 
 
 def render(name, row_id):
+    """Render promotional text on an unchanged source image.
+
+    Polygon/freehand geometry clips newly drawn text only. Existing artwork
+    (including existing writing and pictures) is never erased or altered.
+    """
     cfg = mapping(name)
     if not cfg or cfg["source_checksum"] != describe(name)["checksum"]:
         raise ValueError("Visual regions not configured or image replaced")
@@ -290,30 +342,55 @@ def render(name, row_id):
             continue
         x = round(image.width * layer["x"] / 1000)
         y = round(image.height * layer["y"] / 1000)
-        width = round(image.width * layer["w"] / 1000)
-        height = round(image.height * layer["h"] / 1000)
+        width = max(1, round(image.width * layer["w"] / 1000))
+        height = max(1, round(image.height * layer["h"] / 1000))
+        width = min(width, image.width - x)
+        height = min(height, image.height - y)
+        if width <= 0 or height <= 0:
+            continue
         size = max(8, round(image.width * layer["size"] / 1000))
         min_font = max(8, round(image.width * 8 / 1000))
         for _ in range(18):
             font = _font(size, layer["bold"])
             lines = _wrap(draw, value, font, width)
             box = draw.textbbox((0, 0), "Ag", font=font)
-            line_height = max(1, box[3]-box[1]+round(size*.25))
-            if len(lines)*line_height <= height or size <= min_font:
+            line_height = max(1, box[3] - box[1] + round(size * .25))
+            if len(lines) * line_height <= height or size <= min_font:
                 break
-            size = max(min_font, size-2)
+            size = max(min_font, size - 2)
+        shape = layer.get("shape", "rect")
+        polygon = layer.get("points") if shape != "rect" else None
+        if polygon:
+            # Work on the selected bounding box, avoiding full-image masks.
+            text_patch = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            patch_draw = ImageDraw.Draw(text_patch)
+        else:
+            patch_draw = draw
         fill = layer["color"]
         for i, line in enumerate(lines):
-            py = y + i*line_height
-            if py + line_height > y + height:
+            py = i * line_height
+            if py + line_height > height:
                 break
             measured = draw.textbbox((0, 0), line, font=font)[2]
-            px = x
+            px = 0
             if layer["align"] == "center":
-                px += max(0, (width-measured)//2)
+                px += max(0, (width - measured) // 2)
             elif layer["align"] == "right":
-                px += max(0, width-measured)
-            draw.text((px, py), line, font=font, fill=fill)
+                px += max(0, width - measured)
+            if polygon:
+                patch_draw.text((px, py), line, font=font, fill=fill)
+            else:
+                patch_draw.text((x + px, y + py), line, font=font, fill=fill)
+        if polygon:
+            mask = Image.new("L", (width, height), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.polygon([
+                (round(point["x"] * image.width / 1000) - x,
+                 round(point["y"] * image.height / 1000) - y)
+                for point in polygon
+            ], fill=255)
+            text_patch.putalpha(ImageChops.multiply(text_patch.getchannel("A"), mask))
+            image.paste(text_patch, (x, y), text_patch)
     output = io.BytesIO()
     image.save(output, "PNG", optimize=True)
     return output.getvalue()
@@ -422,3 +499,32 @@ def overview():
             )
             counts = {row["template_name"]: int(row["count"]) for row in cur.fetchall()}
     return {"mappings": mappings, "counts": counts, "records": sum(counts.values())}
+
+
+def export_batch(name, limit=10):
+    """Export up to 12 promotional PNG variations, without modifying the DB."""
+    source_path(name)
+    if not saved_fields(name):
+        raise ValueError("Save a text mapping first")
+    try:
+        limit = int(limit)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Invalid batch size") from exc
+    if not 1 <= limit <= 12:
+        raise ValueError("Batch size must be between 1 and 12")
+    entries = list(reversed(records(name, limit)))
+    if not entries:
+        raise ValueError("Add content records before exporting a batch")
+    archive = io.BytesIO()
+    total = 0
+    stem = Path(name).stem[:50]
+    with ZipFile(archive, "w", compression=ZIP_DEFLATED) as zip_file:
+        for entry in entries:
+            payload = render(name, entry["id"])
+            total += len(payload)
+            if total > 60 * 1024 * 1024:
+                raise ValueError("Batch exceeds 60 MB. Export fewer versions.")
+            zip_file.writestr(
+                f"{stem}-campaign-{entry['id']}.png", payload
+            )
+    return archive.getvalue()
