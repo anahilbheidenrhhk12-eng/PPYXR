@@ -50,6 +50,14 @@ def editor(handler, session, name):
             + admin_ui.icon("plus", 15) + ' Draw text area</button>'
             '<button class="toolbar-button" type="button" data-auto>'
             + admin_ui.icon("sparkle", 15) + ' Smart suggest</button>'
+            '<button class="toolbar-button" type="button" data-polygon>'
+            + admin_ui.icon("edit", 14) + ' Polygon</button>'
+            '<button class="toolbar-button" type="button" data-lasso>'
+            + admin_ui.icon("layers", 14) + ' Freehand lasso</button>'
+            '<button class="toolbar-button" type="button" data-finish-shape>'
+            + admin_ui.icon("check", 14) + ' Finish polygon</button>'
+            '<button class="toolbar-button" type="button" data-cancel-shape>'
+            + admin_ui.icon("trash", 14) + ' Cancel</button>'
             '<button class="toolbar-button" type="button" data-preview aria-pressed="false">'
             + admin_ui.icon("image", 15) + ' Sample preview</button>'
             '</div>'
@@ -140,6 +148,7 @@ def editor(handler, session, name):
             + ' This editor overlays new promotional text on the artwork. '
             'It does not erase text baked into the image or replace faces.</div>'
             '<script defer src="/admin/assets/raster.js"></script>'
+            '<script defer src="/admin/assets/raster-shapes.js"></script>'
         )
         handler._send(200, _page("Visual image editor", body, active="library"))
     except Exception as exc:
@@ -230,6 +239,9 @@ def records_page(handler, session, name, edit_id=None):
             + admin_ui.icon("edit", 16) + ' Visual mapping</a>'
             '<a class="btn" href="/admin/templates/raster/next?name=' + quote(name)
             + '">' + admin_ui.icon("bolt", 16) + ' Generate next version</a>'
+            '<a class="btn btn-secondary" href="/admin/templates/raster/batch?count=10&name='
+            + quote(name) + '">'
+            + admin_ui.icon("download", 16) + ' Export 10 PNGs (.zip)</a>'
             '</div></div>'
             '<div class="two-columns">'
             '<section class="panel"><div class="panel-head"><div><h2>'
@@ -279,8 +291,17 @@ def do_get(handler, route, session):
         "/admin/templates/raster/preview",
         "/admin/templates/raster/download",
         "/admin/templates/raster/next",
+        "/admin/templates/raster/batch",
     ):
         try:
+            if path.endswith("/batch"):
+                count = (params.get("count") or ["10"])[0]
+                data = raster_creatives.export_batch(name, count)
+                handler._send(200, data, "application/zip", {
+                    "Content-Disposition": "attachment; filename*=UTF-8''"
+                    + quote("promo-batch-" + name.rsplit(".", 1)[0] + ".zip")
+                })
+                return True
             if path.endswith("/next"):
                 row_id, data = raster_creatives.next_version(name)
             else:
