@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import admin_ui
 import creative_templates
+import raster_creatives
 
 
 def esc(value):
@@ -29,20 +30,24 @@ def overview_data():
     except Exception:
         details = {"mappings": {}, "counts": {}, "records": 0, "recent": []}
         db_online = False
+    try:
+        details["raster"] = raster_creatives.overview()
+    except Exception:
+        details["raster"] = {"mappings": {}, "counts": {}, "records": 0}
     return files, details, db_online
 
 
 def stats(files, detail, db_online):
-    svg = sum(1 for f in files if f.suffix.lower() == ".svg")
-    mapped = sum(
-        1 for f in files
-        if f.suffix.lower() == ".svg" and f.name in detail["mappings"]
-    )
+    image_types = {".jpg", ".jpeg", ".png", ".webp"}
+    editable = sum(1 for f in files if f.suffix.lower() in image_types)
+    raster = detail.get("raster", {"mappings": {}, "counts": {}, "records": 0})
+    mapped_svg = sum(1 for f in files if f.suffix.lower() == ".svg" and f.name in detail["mappings"])
+    mapped_raster = sum(1 for f in files if f.suffix.lower() in image_types and f.name in raster["mappings"])
     blocks = [
         ("Total templates", len(files), "layers", "All uploaded design assets"),
-        ("Editable SVG", svg, "image", "Ready for layer mapping"),
-        ("Mapped templates", mapped if db_online else "—", "bolt", "Configured field sets"),
-        ("Content records", detail["records"] if db_online else "—",
+        ("Visual images", editable, "image", "PNG / JPG / WEBP available"),
+        ("Mapped templates", mapped_svg + mapped_raster if db_online else "—", "bolt", "Configured field sets"),
+        ("Content records", detail["records"] + raster["records"] if db_online else "—",
          "database", "Saved in PostgreSQL"),
     ]
     return '<div class="stats-grid">' + "".join(
@@ -73,6 +78,8 @@ def cards(files, detail, token):
     results = []
     mapped = detail["mappings"]
     record_counts = detail["counts"]
+    raster_mapped = detail.get("raster", {}).get("mappings", {})
+    raster_counts = detail.get("raster", {}).get("counts", {})
     for path in files:
         name = path.name
         slug = quote(name)
@@ -85,10 +92,14 @@ def cards(files, detail, token):
                "/admin/templates/thumb?name=") + slug
         art = ('<img alt="" loading="lazy" src="' + esc(src) + '">' if is_image
                else '<span class="format-icon">' + item_icon(kind) + '</span>')
-        configured = is_svg and name in mapped
+        editable_raster = kind in ("PNG", "JPG", "JPEG", "WEBP")
+        configured_svg = is_svg and name in mapped
+        configured_raster = editable_raster and name in raster_mapped
+        configured = configured_svg or configured_raster
         status = ('<span class="badge green">' + admin_ui.icon("check", 12)
                   + ' Configured</span>' if configured else
-                  '<span class="badge warning">Needs mapping</span>' if is_svg else
+                  '<span class="badge warning">Needs mapping</span>'
+                  if is_svg or editable_raster else
                   '<span class="badge">Stored file</span>')
         time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).strftime("%d %b %Y")
         primary = (
@@ -96,9 +107,18 @@ def cards(files, detail, token):
             + admin_ui.icon("edit", 14) + ' Edit fields</a>'
             if is_svg else ''
         )
+        if editable_raster:
+            primary = (
+                '<a class="btn" href="/admin/templates/raster/edit?name='
+                + slug + '">' + admin_ui.icon("edit", 14) + ' Visual editor</a>'
+            )
         if configured:
+            record_path = (
+                "/admin/templates/rows?name=" if is_svg else
+                "/admin/templates/raster/records?name="
+            )
             primary += (
-                '<a class="btn btn-secondary" href="/admin/templates/rows?name='
+                '<a class="btn btn-secondary" href="' + record_path
                 + slug + '">' + admin_ui.icon("database", 14) + ' Content</a>'
             )
         if not primary:
@@ -119,7 +139,7 @@ def cards(files, detail, token):
             '<span>' + _size(stat.st_size) + '</span></div>'
             '<div style="margin-bottom:15px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
             + status +
-            ('<span class="badge">' + str(record_counts.get(name, 0)) + ' versions</span>'
+            ('<span class="badge">' + str((record_counts if is_svg else raster_counts).get(name, 0)) + ' versions</span>'
              if configured else '')
             + '</div><div class="template-actions">' + primary +
             '<a class="btn btn-ghost" title="Download original" '
@@ -269,7 +289,7 @@ def library_view(files, data, token):
 def upload_view(token):
     checks = [
         ("SVG", "Editable text-field mapping and version generation"),
-        ("PNG / JPG / WEBP", "Image preview and storage"),
+        ("PNG / JPG / WEBP", "Visual text editor, smart placement and version generation"),
         ("PDF / DOCX", "File storage and download"),
         ("ZIP", "Archive storage and download"),
     ]
@@ -282,7 +302,7 @@ def upload_view(token):
     body = (
         heading(
             "ASSET UPLOAD", "Upload center",
-            "Import creative assets and add editable SVG templates to your workspace.",
+            "Upload editable SVG artwork or a regular image for the visual editor.",
             '<a class="btn btn-secondary" href="/admin/templates?view=library">'
             + admin_ui.icon("layers", 16) + ' View library</a>',
         )
@@ -294,8 +314,8 @@ def upload_view(token):
         '<h2>Supported formats</h2><p>Choose the right type for your task</p>'
         '</div></div>' + formats + '</section></div>'
         '<div class="note">' + admin_ui.icon("info", 15)
-        + ' SVG exports retain text-layer editing only if the source keeps text '
-        'as text. Converting text to paths removes editable text layers.</div>'
+        + ' SVG files preserve native text layers. PNG, JPG and WEBP open in the '
+        'interactive visual editor for new promotional text regions.</div>'
     )
     return body
 
