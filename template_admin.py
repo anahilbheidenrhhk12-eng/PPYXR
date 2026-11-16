@@ -17,6 +17,8 @@ import creative_admin
 import creative_templates
 import admin_ui
 import admin_dashboard
+import raster_admin
+import raster_ui
 from email import policy
 from email.parser import BytesParser
 from http.cookies import SimpleCookie
@@ -107,7 +109,7 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self'; form-action 'self'; "
+            "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; "
             "frame-ancestors 'none'; base-uri 'none'",
         )
         for k, v in (extra or {}).items():
@@ -190,6 +192,12 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
         if route.path == "/admin/assets/styles.css":
             self._send(200, admin_ui.STYLE.encode("utf-8"), "text/css; charset=utf-8")
             return
+        if route.path == "/admin/assets/raster.css":
+            self._send(200, raster_ui.STYLE.encode("utf-8"), "text/css; charset=utf-8")
+            return
+        if route.path == "/admin/assets/raster.js":
+            self._send(200, raster_ui.SCRIPT.encode("utf-8"), "text/javascript; charset=utf-8")
+            return
         if route.path == "/admin/assets/app.js":
             self._send(200, admin_ui.SCRIPT.encode("utf-8"), "text/javascript; charset=utf-8")
             return
@@ -229,6 +237,8 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
                 return
             self._send(200, path.read_bytes(), types[suffix])
             return
+        if raster_admin.do_get(self, route, session):
+            return
         if creative_admin.do_get(self, route, session):
             return
         if route.path == "/admin/templates/file":
@@ -254,6 +264,9 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
             "/admin/templates/upload", "/admin/templates/delete",
             "/admin/templates/map", "/admin/templates/record",
             "/admin/templates/record_update", "/admin/templates/record_delete",
+            "/admin/templates/raster/save", "/admin/templates/raster/add_record",
+            "/admin/templates/raster/update_record",
+            "/admin/templates/raster/delete_record",
         ):
             self._send(404, b"Not found", "text/plain")
             return
@@ -347,6 +360,8 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
                 LOG.info("Admin uploaded template %s (%d bytes)", name, len(payload))
                 if name.lower().endswith(".svg"):
                     self._redirect("/admin/templates/edit?name=" + quote(name))
+                elif Path(name).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                    self._redirect("/admin/templates/raster/edit?name=" + quote(name))
                 else:
                     self._redirect("/admin/templates?msg=Template+saved+successfully")
                 return
@@ -356,9 +371,13 @@ class TemplateAdminHandler(BaseHTTPRequestHandler):
                     '<div class="note error">Unable to process upload.</div>'
                     '<a href="/admin/templates">Back to templates</a>'))
                 return
+        if raster_admin.do_post_json(self, route, body, _csrf(key, session)):
+            return
         fields = self._fields(body)
         if not hmac.compare_digest(fields.get("csrf", ""), _csrf(key, session)):
             self._send(403, b"Invalid form token", "text/plain")
+            return
+        if raster_admin.do_post_form(self, route, fields):
             return
         if creative_admin.do_post(self, route, fields):
             return
